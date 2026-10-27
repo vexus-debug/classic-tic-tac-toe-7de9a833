@@ -14,3 +14,4 @@
 - Dental dashboard data is role-focused: leadership sees clinic financials, dentists see their assigned schedule, and front-desk roles see queue and collections.
 - Public marketing pages use CDN-backed snapshots of the current dashboard; tutorial image files remain isolated and unchanged.
 - Every shipped feature, improvement or bug fix must be logged as a new entry (newest first) in `src/data/updates.ts` (the public /updates page) in the same change — no exceptions.
+- MANDATORY for any design/UI/layout/visual/styling task (plan or implementation): first read `docs/design-skill/SKILL.md` in full and follow its entire workflow (fact check, Design Read + five dials, design-system declaration, anti-cliché rules, pre-delivery checklist), plus every reference file it routes to under `docs/design-skill/references/`. Why: the user requires the Web Design Engineer skill itself to govern all design work, not ad-hoc plans.
