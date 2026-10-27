@@ -118,39 +118,58 @@ function ProgressRing({ completed, total }: { completed: number; total: number }
   );
 }
 
-function Sparkline({ data }: { data: number[] }) {
+type Tone = "success" | "warning" | "destructive" | "info";
+
+const toneSurface: Record<Tone, string> = {
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/15 text-warning",
+  destructive: "bg-destructive/10 text-destructive",
+  info: "bg-info/10 text-info",
+};
+const toneStroke: Record<Tone, string> = {
+  success: "hsl(var(--success))",
+  warning: "hsl(var(--warning))",
+  destructive: "hsl(var(--destructive))",
+  info: "hsl(var(--info))",
+};
+const kpiTones: Record<DashboardMode, Tone[]> = {
+  owner: ["success", "info", "warning", "destructive"],
+  dentist: ["info", "success", "info", "warning"],
+  receptionist: ["warning", "info", "success", "destructive"],
+};
+
+function Sparkline({ data, color }: { data: number[]; color: string }) {
   const points = data.map((value, index) => ({ index, value }));
   return (
-    <div className="h-10 w-24" aria-hidden="true">
+    <div className="h-8 w-full" aria-hidden="true">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={points}>
-          <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function KpiTile({ label, value, detail, icon: Icon, series }: {
+function KpiTile({ label, value, detail, icon: Icon, series, tone }: {
   label: string;
   value: string;
   detail: string;
   icon: typeof Users;
   series: number[];
+  tone: Tone;
 }) {
   return (
-    <div className="w-[248px] shrink-0 border-r border-border/70 px-5 py-3 first:pl-0 last:border-r-0 sm:w-auto sm:min-w-[215px] sm:flex-1">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Icon className="h-4 w-4" strokeWidth={iconStroke} />
-            <p className="truncate text-[11px] font-semibold uppercase">{label}</p>
-          </div>
-          <p className="mt-3 truncate text-2xl font-bold tabular-nums text-foreground">{value}</p>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
-        </div>
-        <Sparkline data={series} />
+    <div className="min-w-0 rounded-lg border border-border/60 bg-card p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md", toneSurface[tone])}>
+          <Icon className="h-3.5 w-3.5" strokeWidth={iconStroke} />
+        </span>
       </div>
+      <p className="mt-2 truncate text-xl font-bold tabular-nums text-foreground sm:text-2xl">{value}</p>
+      <p className="truncate text-xs text-muted-foreground">{detail}</p>
+      <div className="mt-2"><Sparkline data={series} color={toneStroke[tone]} /></div>
     </div>
   );
 }
@@ -292,15 +311,38 @@ function StandardDashboardHome() {
 
   const showOnboarding = mode === "owner" && s.totalPatients === 0;
 
+  const chairs = useMemo(() => {
+    const map = new Map<string, ScheduleItem | null>();
+    schedule.forEach((item) => {
+      if (!item.chair) return;
+      const current = map.get(item.chair);
+      if (item.status === "in-progress" || item.status === "in_progress") map.set(item.chair, item);
+      else if (current === undefined) map.set(item.chair, null);
+    });
+    return Array.from(map.entries()).slice(0, 6);
+  }, [schedule]);
+
+  const statusTone = (status: string): Tone => {
+    if (status === "completed") return "success";
+    if (status.startsWith("in")) return "info";
+    if (["cancelled", "no-show", "no_show"].includes(status)) return "destructive";
+    if (status === "confirmed") return "info";
+    return "warning";
+  };
+
   return (
-    <div className="space-y-6 pb-4">
-      <div className="flex items-start justify-between gap-4" data-tour="page-header">
+    <div className="space-y-5 pb-4">
+      <div className="flex flex-wrap items-end justify-between gap-3" data-tour="page-header">
         <div>
-          <p className="text-sm text-muted-foreground">{format(new Date(), "EEEE, MMMM d")}</p>
-          <h1 className="mt-1 text-2xl font-bold text-foreground">{getGreeting()}, {userName || "there"}</h1>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{format(new Date(), "EEEE, MMMM d")}</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground md:text-3xl">{getGreeting()}, {userName || "there"}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">{schedule.length}</span> appointments · <span className="font-semibold text-success">{completed}</span> done · <span className="font-semibold text-warning">{activeQueue.length}</span> waiting
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {mode === "dentist" && <Button size="sm" variant="outline" onClick={startDentistVisitTour}>Walk through a visit</Button>}
+          <Button asChild size="sm"><Link to={hero.to}>{hero.action}<ArrowRight className="h-4 w-4" /></Link></Button>
           <PageTourButton />
         </div>
       </div>
@@ -316,124 +358,133 @@ function StandardDashboardHome() {
 
       {mode === "dentist" && <DentistWaitingRoomCard staffId={pulse?.assignedStaffId || null} />}
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-lg bg-gradient-to-br from-primary/60 via-primary/20 to-border p-px shadow-[0_18px_48px_-28px_hsl(var(--primary)/0.65)]">
-        <div className="grid gap-5 rounded-[7px] bg-card p-5 md:grid-cols-[1fr_auto] md:items-center md:p-7">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-primary">
-              <hero.icon className="h-4 w-4" strokeWidth={iconStroke} />
-              <span className="text-xs font-semibold uppercase">{hero.eyebrow}</span>
-            </div>
-            <h2 className="mt-3 text-2xl font-bold text-foreground md:text-3xl">{hero.title}</h2>
-            <div className="mt-3 flex min-h-10 items-center gap-3">
-              {nextAppointment ? (
-                <>
-                  <Avatar className="h-9 w-9"><AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">{nextAppointment.patientName.split(" ").map((name) => name[0]).join("").slice(0, 2)}</AvatarFallback></Avatar>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-foreground">{nextAppointment.time} · {nextAppointment.treatment}</p>
-                    <p className="truncate text-xs text-muted-foreground">{nextAppointment.dentist} · {nextAppointment.chair}</p>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">No more scheduled patients today.</p>
-              )}
-            </div>
-            <Button asChild className="mt-5">
-              <Link to={hero.to}>{hero.action}<ArrowRight className="h-4 w-4" strokeWidth={iconStroke} /></Link>
-            </Button>
-          </div>
-          <ProgressRing completed={completed} total={schedule.length} />
-        </div>
-      </motion.div>
-
-      <div className="overflow-x-auto border-y border-border/70 py-2 scroll-momentum" data-tour="dashboard-kpi-cards">
-        <div className="flex min-w-max sm:min-w-0">
-          {kpis.map((kpi) => <KpiTile key={kpi.label} {...kpi} />)}
-        </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-tour="dashboard-kpi-cards">
+        {kpis.map((kpi, i) => <KpiTile key={kpi.label} {...kpi} tone={kpiTones[mode][i]} />)}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.75fr)]">
-        <Card className="border-border/60 bg-card">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
+      <Card className="border-border/60">
+        <CardContent className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Chairs right now</p>
+            <div className="flex gap-3 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-info" />In chair</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-success" />Free</span>
+            </div>
+          </div>
+          {chairs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No chairs booked today.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              {chairs.map(([chair, occupant]) => (
+                <div key={chair} className={cn("rounded-md border p-3", occupant ? "border-info/30 bg-info/10" : "border-success/30 bg-success/10")}>
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn("h-2 w-2 rounded-full", occupant ? "bg-info animate-pulse" : "bg-success")} />
+                    <p className="truncate text-xs font-semibold text-foreground">{chair}</p>
+                  </div>
+                  <p className={cn("mt-1 truncate text-xs", occupant ? "text-info" : "text-success")}>{occupant ? occupant.patientName : "Available"}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)]">
+        <Card className="border-border/60">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
             <div>
-              <CardTitle className="text-base">{mode === "owner" ? "Clinic momentum" : mode === "dentist" ? "Your patient flow" : "Today’s arrivals"}</CardTitle>
-              <CardDescription>{mode === "owner" ? "Appointments this week" : "The working list for today"}</CardDescription>
+              <CardTitle className="text-base">{mode === "dentist" ? "Your patients today" : "Today's schedule"}</CardTitle>
+              <CardDescription>{nextAppointment ? `Next: ${nextAppointment.patientName} at ${nextAppointment.time}` : "No more scheduled patients"}</CardDescription>
             </div>
             <Button asChild variant="ghost" size="sm"><Link to={`${basePath}/appointments`}>View all<ArrowRight className="h-4 w-4" /></Link></Button>
           </CardHeader>
           <CardContent>
-            {mode === "owner" ? (
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={weeklyData}>
-                    <defs><linearGradient id="weekFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.24} /><stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} /></linearGradient></defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
-                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} width={28} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                    <Tooltip contentStyle={tooltipStyle} />
-                    <Area type="monotone" dataKey="count" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#weekFill)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : schedule.length === 0 ? (
-              <div className="flex h-72 flex-col items-center justify-center gap-4 text-center">
-                <ToothMotif />
-                <div><p className="font-semibold text-foreground">Nothing scheduled yet</p><p className="mt-1 text-sm text-muted-foreground">New appointments will appear here.</p></div>
+            {schedule.length === 0 ? (
+              <div className="flex h-48 flex-col items-center justify-center gap-2 text-center">
+                <CalendarDays className="h-6 w-6 text-muted-foreground" strokeWidth={iconStroke} />
+                <p className="font-semibold text-foreground">Nothing scheduled yet</p>
+                <p className="text-sm text-muted-foreground">New appointments will appear here.</p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {schedule.slice(0, 7).map((appointment) => (
-                  <div key={appointment.id} className="flex items-center gap-3 border-b border-border/60 py-3 last:border-0">
-                    <span className="w-12 shrink-0 text-sm font-bold tabular-nums text-foreground">{appointment.time}</span>
-                    <span className={cn("h-2 w-2 shrink-0 rounded-full", appointment.status === "completed" ? "bg-primary" : "bg-muted-foreground/50")} />
-                    <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-foreground">{appointment.patientName}</p><p className="truncate text-xs text-muted-foreground">{appointment.treatment} · {appointment.chair}</p></div>
-                    {mode === "receptionist" && appointment.patientId && ["scheduled", "confirmed"].includes(appointment.status) ? (
-                      <Button size="sm" variant="outline" disabled={checkIn.isPending} onClick={() => checkIn.mutate({ patient_id: appointment.patientId!, appointment_id: appointment.id, chair: appointment.chair })}>Check in</Button>
-                    ) : (
-                      <span className="text-xs capitalize text-muted-foreground">{appointment.status.replace("-", " ")}</span>
-                    )}
-                  </div>
-                ))}
+              <div>
+                {schedule.slice(0, 8).map((appointment) => {
+                  const tone = statusTone(appointment.status);
+                  return (
+                    <div key={appointment.id} className="flex items-center gap-3 border-b border-border/60 py-3 last:border-0">
+                      <span className="w-12 shrink-0 text-sm font-bold tabular-nums text-foreground">{appointment.time}</span>
+                      <Avatar className="hidden h-8 w-8 sm:flex"><AvatarFallback className="bg-muted text-[11px] font-bold text-foreground">{appointment.patientName.split(" ").map((n) => n[0]).join("").slice(0, 2)}</AvatarFallback></Avatar>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-foreground">{appointment.patientName}</p>
+                        <p className="truncate text-xs text-muted-foreground">{appointment.treatment} · {appointment.dentist} · {appointment.chair}</p>
+                      </div>
+                      {mode === "receptionist" && appointment.patientId && ["scheduled", "confirmed"].includes(appointment.status) ? (
+                        <Button size="sm" variant="outline" disabled={checkIn.isPending} onClick={() => checkIn.mutate({ patient_id: appointment.patientId!, appointment_id: appointment.id, chair: appointment.chair })}>Check in</Button>
+                      ) : (
+                        <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize", toneSurface[tone])}>{appointment.status.replace(/[-_]/g, " ")}</span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card className="border-primary/20 bg-primary/5">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 text-primary"><Sparkles className="h-4 w-4" strokeWidth={iconStroke} /><p className="text-xs font-semibold uppercase">Daily insight</p></div>
-              <p className="mt-3 text-sm font-medium leading-6 text-foreground">{dailyInsight}</p>
-              <p className="mt-3 text-[11px] text-muted-foreground">Based on this clinic’s schedule only</p>
-            </CardContent>
-          </Card>
-          <div className="space-y-2">
-            {actions.map((item) => (
-              <Link key={item.text} to={item.to} className="group flex items-center gap-3 rounded-lg border border-border/70 bg-card p-4 transition-colors hover:border-primary/30 hover:bg-primary/5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-primary"><item.icon className="h-4 w-4" strokeWidth={iconStroke} /></div>
-                <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground"><span className="tabular-nums">{item.count}</span> {item.text}</p><p className="mt-0.5 text-xs font-medium text-primary">{item.action}</p></div>
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Needs attention</p>
+          {actions.map((item, i) => {
+            const tone: Tone = item.count === 0 ? "success" : (["warning", "destructive", "info"] as Tone[])[i % 3];
+            return (
+              <Link key={item.text} to={item.to} className="group flex items-center gap-3 rounded-lg border border-border/70 bg-card p-4 transition-colors hover:bg-muted/50">
+                <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-md", toneSurface[tone])}><item.icon className="h-4 w-4" strokeWidth={iconStroke} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-foreground"><span className="text-lg font-bold tabular-nums">{item.count}</span> {item.text}</p>
+                  <p className="text-xs font-medium text-primary">{item.action}</p>
+                </div>
                 <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" strokeWidth={iconStroke} />
               </Link>
-            ))}
+            );
+          })}
+          <div className="rounded-lg border border-info/25 bg-info/5 p-4">
+            <div className="flex items-center gap-2 text-info"><Sparkles className="h-4 w-4" strokeWidth={iconStroke} /><p className="text-xs font-semibold uppercase">Insight</p></div>
+            <p className="mt-2 text-sm leading-6 text-foreground">{dailyInsight}</p>
           </div>
         </div>
       </div>
 
       {mode === "owner" && (
-        <Card className="border-border/60 bg-card">
-          <CardHeader><CardTitle className="text-base">Revenue trend</CardTitle><CardDescription>Collections over the last six months</CardDescription></CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <defs><linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.22} /><stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
-                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <YAxis axisLine={false} tickLine={false} width={48} tickFormatter={(value) => `${Math.round(value / 1000)}k`} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(value: number) => [formatCurrency(value), "Revenue"]} />
-                <Area type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2.5} fill="url(#revenueFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card className="border-border/60">
+            <CardHeader className="pb-2"><CardTitle className="text-base">Revenue trend</CardTitle><CardDescription>Collections, last six months</CardDescription></CardHeader>
+            <CardContent className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={revenueData}>
+                  <defs><linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(var(--success))" stopOpacity={0.25} /><stop offset="100%" stopColor="hsl(var(--success))" stopOpacity={0} /></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
+                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                  <YAxis axisLine={false} tickLine={false} width={44} tickFormatter={(value) => `${Math.round(value / 1000)}k`} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(value: number) => [formatCurrency(value), "Revenue"]} />
+                  <Area type="monotone" dataKey="revenue" stroke="hsl(var(--success))" strokeWidth={2.5} fill="url(#revenueFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+          <Card className="border-border/60">
+            <CardHeader className="pb-2"><CardTitle className="text-base">Appointments this week</CardTitle><CardDescription>{totalWeekly} booked</CardDescription></CardHeader>
+            <CardContent className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={weeklyData}>
+                  <defs><linearGradient id="weekFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(var(--info))" stopOpacity={0.25} /><stop offset="100%" stopColor="hsl(var(--info))" stopOpacity={0} /></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-border/50" />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                  <YAxis allowDecimals={false} axisLine={false} tickLine={false} width={28} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Area type="monotone" dataKey="count" stroke="hsl(var(--info))" strokeWidth={2} fill="url(#weekFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
